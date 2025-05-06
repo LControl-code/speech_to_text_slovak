@@ -36,9 +36,24 @@ def setup_argparse():
     parser = argparse.ArgumentParser(
         description="Transcribe Slovak audio/video files using ElevenLabs API with key rotation"
     )
-    parser.add_argument(
+    
+    # Create mutually exclusive group for single file vs batch mode
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument(
         "input_file", 
-        help="Path to audio/video file for transcription"
+        nargs="?",  # Makes it optional when using batch mode
+        default=None,
+        help="Path to audio/video file for transcription (single file mode)"
+    )
+    mode_group.add_argument(
+        "--batch",
+        action="store_true",
+        help="Enable batch processing mode for multiple files"
+    )
+    
+    parser.add_argument(
+        "--source_dir",
+        help="Directory containing audio/video files for batch processing (required with --batch)"
     )
     parser.add_argument(
         "--output_prefix", 
@@ -56,6 +71,7 @@ def setup_argparse():
         "--key",
         help="Specify which API key to use (e.g., '1', '2', 'main'). Maps to ELEVENLABS_API_KEY_X in .env"
     )
+    
     return parser.parse_args()
 
 
@@ -221,6 +237,107 @@ def transcribe_audio_with_rotation(file_path, specific_key=None, verbose=False):
     raise Exception("All API keys failed with unknown errors")
 
 
+def process_batch(file_list, specific_key=None, verbose=False):
+    """Process multiple audio files in batch mode.
+    
+    Args:
+        file_list: List of Path objects for audio/video files
+        specific_key: Optional specific API key to use
+        verbose: Whether to show verbose output
+        
+    Returns:
+        Dictionary with stats about successful and failed transcriptions
+    """
+    total_files = len(file_list)
+    successful = []
+    failed = []
+    
+    print(f"\n{'='*80}")
+    print(f"BATCH PROCESSING: Found {total_files} audio/video files to process")
+    print(f"{'='*80}\n")
+    
+    # Process each file
+    for i, file_path in enumerate(file_list, 1):
+        print(f"\n[{i}/{total_files}] Processing: {file_path.name}")
+        print(f"{'-'*80}")
+        
+        try:
+            # Get output prefix (just the filename without extension)
+            output_prefix = file_path.stem
+            
+            # Transcribe the file
+            response_json = transcribe_audio_with_rotation(
+                file_path, 
+                specific_key=specific_key,
+                verbose=verbose
+            )
+            
+            # Save outputs
+            json_path, text_path = save_outputs(response_json, output_prefix)
+            
+            print(f"✓ Successfully transcribed: {file_path.name}")
+            print(f"  Text saved to: {text_path}")
+            print(f"  JSON saved to: {json_path}")
+            
+            successful.append(file_path.name)
+            
+        except Exception as e:
+            print(f"✗ Failed to process {file_path.name}: {str(e)}")
+            failed.append((file_path.name, str(e)))
+    
+    # Return statistics
+    return {
+        "total": total_files,
+        "successful": successful,
+        "failed": failed
+    }
+    
+def find_audio_files(source_dir):
+    """Find all audio and video files in the source directory.
+    
+    Args:
+        source_dir: Path to directory containing audio/video files
+        
+    Returns:
+        List of Path objects for audio/video files
+    """
+    # Common audio and video extensions
+    audio_extensions = {
+        # Audio formats
+        '.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma', '.aiff', '.opus',
+        # Video formats (ElevenLabs supports video files too)
+        '.mp4', '.avi', '.mov', '.wmv', '.mkv', '.webm', '.flv', '.3gp', '.m4v'
+    }
+    
+    source_path = Path(source_dir)
+    
+    if not source_path.exists():
+        print(f"Error: Source directory '{source_dir}' does not exist.")
+        sys.exit(1)
+    
+    if not source_path.is_dir():
+        print(f"Error: '{source_dir}' is not a directory.")
+        sys.exit(1)
+    
+    # Find all files with audio/video extensions
+    audio_files = []
+    for ext in audio_extensions:
+        if os.name == "nt":  # Windows (case-insensitive)
+            audio_files.extend(source_path.glob(f"*{ext.lower()}"))
+        else:  # Unix/Linux (case-sensitive)
+            audio_files.extend(source_path.glob(f"*{ext}"))
+            audio_files.extend(source_path.glob(f"*{ext.upper()}"))
+
+    # Add deduplication as a safety measure
+    audio_files = sorted(set(str(path) for path in audio_files))
+    audio_files = [Path(path) for path in audio_files]
+    
+    if not audio_files:
+        print(f"Warning: No audio or video files found in '{source_dir}'.")
+        sys.exit(1)
+
+    return audio_files
+
 def save_outputs(response_json, output_prefix):
     """Save transcription outputs in plain text and JSON formats with organized directory structure.
     
@@ -262,34 +379,70 @@ def main():
     # Parse command line arguments
     args = setup_argparse()
     
-    # Validate input file
-    input_path = validate_file(args.input_file)
-    
-    # Set output prefix
-    if args.output_prefix:
-        output_prefix = args.output_prefix
-    else:
-        output_prefix = input_path.stem  # Filename without extension
-    
-    # Transcribe audio with API key rotation
-    try:
-        # Use the specified key if provided
-        response_json = transcribe_audio_with_rotation(
-            input_path, 
+    # Handle different processing modes
+    if args.batch:
+        # Batch processing mode
+        if not args.source_dir:
+            print("Error: --source_dir is required when using --batch mode")
+            sys.exit(1)
+        
+        # Find all audio files in the source directory
+        audio_files = find_audio_files(args.source_dir)
+        
+        # Process files in batch
+        stats = process_batch(
+            audio_files,
             specific_key=args.key,
             verbose=args.verbose
         )
         
-        # Save outputs
-        json_path, text_path = save_outputs(response_json, output_prefix)
+        # Print batch processing summary
+        print(f"\n{'='*80}")
+        print(f"BATCH PROCESSING SUMMARY")
+        print(f"{'='*80}")
+        print(f"Total files processed: {stats['total']}")
+        print(f"Successfully transcribed: {len(stats['successful'])}")
+        print(f"Failed: {len(stats['failed'])}")
         
-        print(f"\nTranscription complete!")
-        print(f"Plain text saved to: {text_path}")
-        print(f"Full JSON response saved to: {json_path}")
+        if stats['failed']:
+            print("\nFailed files:")
+            for filename, error in stats['failed']:
+                print(f"  - {filename}: {error}")
         
-    except Exception as e:
-        print(f"Error during transcription: {str(e)}")
-        sys.exit(1)
+        print(f"\nOutput location:")
+        print(f"  - Text files: output_files/")
+        print(f"  - JSON files: output_files/full_response/")
+        
+    else:
+        # Single file mode
+        # Validate input file
+        input_path = validate_file(args.input_file)
+        
+        # Set output prefix
+        if args.output_prefix:
+            output_prefix = args.output_prefix
+        else:
+            output_prefix = input_path.stem  # Filename without extension
+        
+        # Transcribe audio with API key rotation
+        try:
+            # Use the specified key if provided
+            response_json = transcribe_audio_with_rotation(
+                input_path, 
+                specific_key=args.key,
+                verbose=args.verbose
+            )
+            
+            # Save outputs
+            json_path, text_path = save_outputs(response_json, output_prefix)
+            
+            print(f"\nTranscription complete!")
+            print(f"Plain text saved to: {text_path}")
+            print(f"Full JSON response saved to: {json_path}")
+            
+        except Exception as e:
+            print(f"Error during transcription: {str(e)}")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
