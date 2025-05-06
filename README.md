@@ -10,6 +10,7 @@ A robust, production-ready transcription tool leveraging ElevenLabs' Scribe API 
 - **High-Accuracy Slovak Transcription**: Optimized for Slovak language using ElevenLabs' state-of-the-art Scribe model
 - **Smart API Key Rotation**: Automatically rotates through multiple ElevenLabs API keys when usage limits are hit
 - **Selective Key Usage**: Ability to specify which API key to use for specific tasks
+- **Batch Processing**: Support for processing entire directories of audio/video files with detailed stats
 - **Structured Output**: Organizes outputs with plain text in main directory and full JSON responses in subdirectory 
 - **Error Resilience**: Comprehensive error handling with informative diagnostics
 - **Production Ready**: Built for real-world use with industrial-grade reliability
@@ -35,7 +36,7 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install elevenlabs python-dotenv
+pip install requests python-dotenv
 ```
 
 ### Configuration
@@ -53,15 +54,12 @@ ELEVENLABS_API_KEY_MAIN=your_main_api_key
 
 ### Usage
 
-Basic transcription:
+#### Single File Mode
 
 ```bash
+# Basic transcription
 python slovak_transcriber.py audio_file.mp3
-```
 
-Advanced options:
-
-```bash
 # Use a specific API key
 python slovak_transcriber.py audio_file.mp3 --key=1
 
@@ -72,6 +70,19 @@ python slovak_transcriber.py audio_file.mp3 --output_prefix=meeting_transcript
 python slovak_transcriber.py audio_file.mp3 --verbose
 ```
 
+#### Batch Processing Mode
+
+```bash
+# Process all audio files in a directory
+python slovak_transcriber.py --batch --source_dir=/path/to/audio/files
+
+# Process with a specific API key
+python slovak_transcriber.py --batch --source_dir=/path/to/audio/files --key=main
+
+# Verbose batch processing
+python slovak_transcriber.py --batch --source_dir=/path/to/audio/files --verbose
+```
+
 ## Architecture
 
 The transcriber follows a pragmatic design pattern optimized for reliability and clean error handling:
@@ -79,9 +90,9 @@ The transcriber follows a pragmatic design pattern optimized for reliability and
 ```
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐
 │ Input Audio │────>│ API Rotation │────>│ Transcription │
-└─────────────┘     │ & Selection  │     │   Process     │
-                    └──────────────┘     └───────┬───────┘
-                                                 │
+│  (Single/   │     │ & Selection  │     │   Process     │
+│   Batch)    │     └──────────────┘     └───────┬───────┘
+└─────────────┘                                  │
                     ┌──────────────┐     ┌───────▼───────┐
                     │     Text     │<────┤   Structured  │
                     │   Output     │     │     Output    │
@@ -90,10 +101,12 @@ The transcriber follows a pragmatic design pattern optimized for reliability and
 
 Key implementation details:
 
+- **Dual Operation Modes**: Supports both single file and batch directory processing
 - **API Key Management**: Keys from `.env` are loaded in original declaration order, ensuring deterministic rotation behavior
 - **Smart Fallback**: When a specific key hits usage limits, the system gracefully falls back to rotation
 - **Output Organization**: Plain text (.txt) files are stored in `output_files/` while detailed JSON responses go to `output_files/full_response/`
 - **Model Selection**: Uses the `scribe_v1` model with optimized parameters for Slovak language processing
+- **Error Isolation**: In batch mode, errors with individual files don't halt the entire process
 
 ## Gotchas & Troubleshooting
 
