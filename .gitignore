@@ -1,3 +1,8 @@
+input_files/
+output_files/
+finished_notes/
+
 .env
-input_files
-claude-env
+*.zip
+
+__pycache__
